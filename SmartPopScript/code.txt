@@ -1,0 +1,7 @@
+ola k ase
+
+prueba
+nada	más
+ola
+
+end;

@@ -160,9 +160,13 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="src\main.cpp" />
+    <ClCompile Include="src\parser.cpp" />
+    <ClCompile Include="src\script.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\common.h" />
+    <ClInclude Include="include\langdata.h" />
+    <ClInclude Include="include\parser.h" />
     <ClInclude Include="include\script.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
