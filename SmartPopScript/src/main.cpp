@@ -5,10 +5,14 @@
 
 int main(int argc, char** argv)
 {
+	parser::init_builtin_tokens();
+
 	ScriptToken stoken = ScriptToken::Blue;
 	DataType type = lang::get_type(stoken);
 
 	parser::Token token = parser::Token::type(lang::get_type(stoken));
+
+	token = parser::get_builtin_token("if");
 
 	/*ScriptToken token = ScriptToken::Blue;
 

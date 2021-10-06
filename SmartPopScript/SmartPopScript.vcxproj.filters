@@ -38,5 +38,8 @@
     <ClInclude Include="include\langdata.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="include\errors.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

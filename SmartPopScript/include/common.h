@@ -1,8 +1,10 @@
 #pragma once
 
+#include <unordered_map>
 #include <filesystem>
 #include <algorithm>
 #include <exception>
+#include <functional>
 #include <concepts>
 #include <iostream>
 #include <compare>
@@ -10,12 +12,15 @@
 #include <sstream>
 #include <utility>
 #include <cstdint>
+#include <format>
+#include <chrono>
 #include <memory>
 #include <string>
 #include <vector>
 #include <queue>
 #include <stack>
 #include <deque>
+#include <regex>
 #include <new>
 
 typedef std::int8_t  Int8;
@@ -91,9 +96,115 @@ namespace utils
 		input.seekg(size, std::ios::cur);
 		return !(input.bad() || input.fail());
 	}
+
+	inline std::chrono::milliseconds time_test(const std::function<void()>& action)
+	{
+		auto t0 = std::chrono::system_clock::now();
+		action();
+		auto t1 = std::chrono::system_clock::now();
+
+		return std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0);
+	}
 }
 
 inline Path operator"" _p(const char* str, Size len) { return Path(std::string(str, len)); }
+
+struct SourcePosition
+{
+	Offset row;
+	Offset column;
+
+	constexpr bool operator== (const SourcePosition&) const = default;
+
+	constexpr std::strong_ordering operator<=> (const SourcePosition& right) const
+	{
+		auto cmp = row <=> right.row;
+		if (cmp == std::strong_ordering::equal)
+			return column <=> right.column;
+		return cmp;
+	}
+};
+
+namespace utils
+{
+	constexpr SourcePosition& max(SourcePosition& left, SourcePosition& right)
+	{
+		return left >= right ? left : right;
+	}
+	constexpr const SourcePosition& max(const SourcePosition& left, const SourcePosition& right)
+	{
+		return left >= right ? left : right;
+	}
+
+	constexpr SourcePosition& min(SourcePosition& left, SourcePosition& right)
+	{
+		return left <= right ? left : right;
+	}
+	constexpr const SourcePosition& min(const SourcePosition& left, const SourcePosition& right)
+	{
+		return left <= right ? left : right;
+	}
+
+	struct row_value { Offset value; };
+	struct column_value { Offset value; };
+}
+
+constexpr SourcePosition operator+ (const SourcePosition& left, utils::row_value right)
+{
+	return { left.row + right.value, left.column };
+}
+constexpr SourcePosition operator+ (utils::row_value& left, const SourcePosition right)
+{
+	return { right.row + left.value, right.column };
+}
+
+constexpr SourcePosition operator+ (const SourcePosition& left, utils::column_value right)
+{
+	return { left.row, left.column + right.value };
+}
+constexpr SourcePosition operator+ (utils::column_value& left, const SourcePosition right)
+{
+	return { right.row, right.column + left.value };
+}
+
+constexpr SourcePosition operator- (const SourcePosition& left, utils::row_value right)
+{
+	return { left.row - right.value, left.column };
+}
+constexpr SourcePosition operator- (utils::row_value& left, const SourcePosition right)
+{
+	return { right.row - left.value, right.column };
+}
+
+constexpr SourcePosition operator- (const SourcePosition& left, utils::column_value right)
+{
+	return { left.row, left.column - right.value };
+}
+constexpr SourcePosition operator- (utils::column_value& left, const SourcePosition right)
+{
+	return { right.row, right.column - left.value };
+}
+
+constexpr SourcePosition& operator+= (SourcePosition& left, utils::row_value right)
+{
+	return left.row + right.value, left;
+}
+
+constexpr SourcePosition& operator+= (SourcePosition& left, utils::column_value right)
+{
+	return left.column + right.value, left;
+}
+
+constexpr SourcePosition& operator-= (SourcePosition& left, utils::row_value right)
+{
+	return left.row - right.value, left;
+}
+
+constexpr SourcePosition& operator-= (SourcePosition& left, utils::column_value right)
+{
+	return left.column - right.value, left;
+}
+
 
 namespace utils
 {
@@ -236,7 +347,7 @@ namespace utils
 		inline pointer_type operator-> () { return _array; }
 		inline const_pointer_type operator-> () const { return _array; }
 
-		inline reference_type operator[] (std::integral auto index) { return _array[index]; }
-		inline const_reference_type operator[] (std::integral auto index) const { return _array[index]; }
+		inline reference_type operator[] (Offset index) { return _array[index]; }
+		inline const_reference_type operator[] (Offset index) const { return _array[index]; }
 	};
 }

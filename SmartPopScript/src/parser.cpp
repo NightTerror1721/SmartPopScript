@@ -86,6 +86,11 @@ namespace parser
 			return elem;
 		}
 	}
+
+	void CodeReader::setCache(const CodeReaderElement& elem)
+	{
+		_cache.push_back(elem);
+	}
 }
 
 
@@ -96,7 +101,8 @@ namespace parser
 	Token::Token(const Token& right) :
 		_type{ right._type },
 		_data{},
-		position{ right.position }
+		start_position{ right.start_position },
+		end_position{ right.end_position }
 	{
 		switch (_type)
 		{
@@ -139,11 +145,13 @@ namespace parser
 	Token::Token(Token&& right) noexcept :
 		_type{ right._type },
 		_data{ right._data },
-		position{ right.position }
+		start_position{ std::move(right.start_position) },
+		end_position{ std::move(right.end_position) }
 	{
 		right._type = TokenType::Invalid;
 		right._data = {};
-		right.position = {};
+		right.start_position = {};
+		right.end_position = {};
 	}
 
 	Token::~Token()
@@ -167,5 +175,188 @@ namespace parser
 					delete _data.literalString;
 				break;
 		}
+	}
+}
+
+
+
+namespace parser
+{
+	namespace
+	{
+		std::unordered_map<std::string, Token> builtin_tokens;
+	}
+
+	void init_builtin_tokens()
+	{
+		#define increase_enum(_Value, _EnumType, _Type) static_cast<_EnumType>(static_cast<_Type>(_Value) + 1)
+		if (builtin_tokens.empty())
+		{
+			for (Command cmd = Command::If; cmd <= Command::Yield; cmd = increase_enum(cmd, Command, int))
+				builtin_tokens.insert({ lang::get_name(cmd), Token::command(cmd) });
+
+			for (RawType type = RawType::Int; type <= RawType::Vehicle; type = increase_enum(type, RawType, int))
+				builtin_tokens.insert({ DataType::get_type_langname(type), Token::type(type) });
+
+			for (TypeModifier mod = TypeModifier::Var; mod <= TypeModifier::Internal; mod = increase_enum(mod, TypeModifier, int))
+				builtin_tokens.insert({ DataType::get_modifier_langname(mod), Token::type(mod) });
+
+			for(ScriptInternal internal = ScriptInternal::GameTurn; internal <= ScriptInternal::GreenMana; internal = increase_enum(internal, ScriptInternal, ScriptCode))
+				builtin_tokens.insert({ lang::get_name(internal), Token::literalInternal(internal) });
+
+			for (ScriptInternal internal = ScriptInternal::AttrExpansion; internal <= ScriptInternal::Bloodlust; internal = increase_enum(internal, ScriptInternal, ScriptCode))
+				builtin_tokens.insert({ lang::get_name(internal), Token::literalInternal(internal) });
+
+			for (ScriptToken token = ScriptToken::ConstructBuilding; token <= ScriptToken::IsPrisonOnLevel; token = increase_enum(token, ScriptToken, ScriptCode))
+				builtin_tokens.insert({ lang::get_name(token), Token::literalData(token) });
+
+			builtin_tokens.insert({ lang::get_name(ScriptToken::On), Token::literalData(ScriptToken::On) });
+			builtin_tokens.insert({ lang::get_name(ScriptToken::Off), Token::literalData(ScriptToken::Off) });
+
+			builtin_tokens.insert({ "yield", Token::yield() });
+		}
+		#undef increase_enum
+	}
+
+	Token get_builtin_token(const std::string& identifier)
+	{
+		const auto it = builtin_tokens.find(identifier);
+		return it == builtin_tokens.end() ? Token() : it->second;
+	}
+}
+
+
+
+void ErrorManager::registerError(const SourcePosition& begin, const parser::CodeReaderElement& elem, const std::string& message)
+{
+	registerError(begin, elem.position + utils::column_value(1), message);
+}
+
+
+
+
+namespace parser
+{
+	bool is_valid_identifier(const std::string& str)
+	{
+		static const std::regex pattern("[_a-zA-Z][_a-zA-Z0-9]*");
+		return std::regex_match(str, pattern);
+	}
+
+	namespace
+	{
+		static inline bool is_valid_literal_integer(const std::string& str)
+		{
+			static const std::regex pattern("[+-]?[0-9]+");
+			return std::regex_match(str, pattern);
+		}
+
+		static inline Int32 parse_integer(const std::string& str)
+		{
+			return static_cast<Int32>(std::stol(str));
+		}
+
+		static Token parse_token_identifier(const std::string& identifier, const SourcePosition& pbegin, const SourcePosition& pend, ErrorManager& errors)
+		{
+			Token token = get_builtin_token(identifier);
+			if (!token.isInvalid())
+				return token.injectPosition(pbegin, pend);
+
+			if (is_valid_literal_integer(identifier))
+				return Token::literalInteger(parse_integer(identifier), pbegin, pend);
+
+			if (is_valid_identifier(identifier))
+				return Token::identifier(identifier, pbegin, pend);
+
+			errors.registerError(pbegin, pend, std::format("Unknown identifier: '{}'", identifier));
+			return Token::invalid(pbegin, pend);
+		}
+
+		static Token parse_token(CodeReader& input, ErrorManager& errors)
+		{
+			#define ss_flush(_Ss, _Elem, _PBegin) if(ss.tellp() > 0) \
+					return input.setCache((_Elem)), parse_token_identifier((_Ss).str(), (_PBegin), (_Elem).position, errors)
+
+			std::ostringstream ss;
+			CodeReaderElement elem;
+			SourcePosition pbegin;
+			bool first = true;
+
+			while (elem = input.next())
+			{
+				if (first)
+				{
+					first = false;
+					pbegin = elem.position;
+				}
+
+				switch (elem.character)
+				{
+					case '\n':
+					case '\t':
+					case '\r':
+					case ' ':
+						if (ss.tellp() > 0)
+							return parse_token_identifier(ss.str(), pbegin, elem.position, errors);
+						break;
+
+					case ';':
+						ss_flush(ss, elem, pbegin);
+						return Token::statementEnd(elem.position);
+
+					case '(':
+						ss_flush(ss, elem, pbegin);
+						return Token::parenthesisOpen(elem.position);
+
+					case ')':
+						ss_flush(ss, elem, pbegin);
+						return Token::parenthesisClose(elem.position);
+
+					case '{':
+						ss_flush(ss, elem, pbegin);
+						return Token::blockOpen(elem.position);
+
+					case '}':
+						ss_flush(ss, elem, pbegin);
+						return Token::blockClose(elem.position);
+
+					case '\"':
+					case '\'': {
+						ss_flush(ss, elem, pbegin);
+
+						const char cend = elem.character;
+						while (input.hasMoreData())
+						{
+							if (!(elem = input.next()))
+							{
+								errors.registerError(pbegin, elem, "Invalid token within a string.");
+								return Token::invalid(pbegin, elem.position);
+							}
+
+							//if(elem.)
+						}
+						
+					} break;
+				}
+			}
+
+			return Token::invalid(pbegin, elem.position);
+			#undef ss_flush
+		}
+	}
+
+	std::vector<Token> parse(CodeReader& input, ErrorManager& errors)
+	{
+		std::vector<Token> tokens;
+		tokens.reserve(utils::ScriptCodeCount + 1);
+
+		while (input.hasMoreData())
+		{
+			Token token = parse_token(input, errors);
+			if (!token.isInvalid())
+				tokens.push_back(std::move(token));
+		}
+
+		return tokens;
 	}
 }

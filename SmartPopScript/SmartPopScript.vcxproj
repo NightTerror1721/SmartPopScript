@@ -165,6 +165,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="include\common.h" />
+    <ClInclude Include="include\errors.h" />
     <ClInclude Include="include\langdata.h" />
     <ClInclude Include="include\parser.h" />
     <ClInclude Include="include\script.h" />

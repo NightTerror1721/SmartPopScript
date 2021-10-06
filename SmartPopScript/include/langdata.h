@@ -447,4 +447,9 @@ namespace lang
 	{
 		return codes::get_token_langname(value);
 	}
+
+	constexpr const char* get_name(ScriptInternal value)
+	{
+		return codes::get_internal_langname(value);
+	}
 }

@@ -3,17 +3,10 @@
 #include "common.h"
 #include "script.h"
 #include "langdata.h"
+#include "errors.h"
 
 namespace parser
 {
-	struct SourcePosition
-	{
-		Offset row;
-		Offset column;
-
-		bool operator== (const SourcePosition&) const = default;
-	};
-
 	struct CodeReaderElement
 	{
 		char character;
@@ -57,8 +50,12 @@ namespace parser
 
 		CodeReaderElement peekNext(Size extra_displ = 0);
 
+		void setCache(const CodeReaderElement& elem);
+
 	public:
 		inline bool hasNext(Size extra_displ = 0) { return peekNext(extra_displ); }
+
+		inline bool hasMoreData() { return _in && *_in && !_in->eof(); }
 	};
 
 
@@ -77,6 +74,8 @@ namespace parser
 		LiteralData,
 		LiteralInternal,
 
+		StatementEnd,
+
 		ParenthesisOpen,
 		ParenthesisClose,
 
@@ -84,6 +83,8 @@ namespace parser
 		BlockClose,
 
 		Operator,
+
+		ElvisSeparatorPart,
 
 		Yield
 	};
@@ -104,13 +105,21 @@ namespace parser
 		} _data;
 
 	public:
-		SourcePosition position;
+		SourcePosition start_position;
+		SourcePosition end_position;
 
 	private:
-		inline Token(TokenType type, Data data) :
+		inline Token(TokenType type, Data data, const SourcePosition& begin, const SourcePosition& end) :
 			_type{ type },
 			_data{ data },
-			position{}
+			start_position{ begin },
+			end_position{ end }
+		{}
+		inline Token(TokenType type, Data data, const SourcePosition& begin) :
+			_type{ type },
+			_data{ data },
+			start_position{ begin },
+			end_position{ begin.row, begin.column + 1 }
 		{}
 
 	public:
@@ -139,11 +148,13 @@ namespace parser
 		inline bool isLiteralInteger() const { return _type == TokenType::LiteralInteger; }
 		inline bool isLiteralData() const { return _type == TokenType::LiteralData; }
 		inline bool isLiteralInternal() const { return _type == TokenType::LiteralInternal; }
+		inline bool isStatementEnd() const { return _type == TokenType::StatementEnd; }
 		inline bool isParenthesisOpen() const { return _type == TokenType::ParenthesisOpen; }
 		inline bool isParenthesisClose() const { return _type == TokenType::ParenthesisClose; }
 		inline bool isBlockOpen() const { return _type == TokenType::BlockOpen; }
 		inline bool isBlockClose() const { return _type == TokenType::BlockClose; }
 		inline bool isOperator() const { return _type == TokenType::Operator; }
+		inline bool isElvisSeparatorPart() const { return _type == TokenType::ElvisSeparatorPart; }
 		inline bool isYield() const { return _type == TokenType::Yield; }
 
 		inline TokenType getType() const { return _type; }
@@ -157,72 +168,108 @@ namespace parser
 		inline ScriptInternal getLiteralInternal() const { return _data.literalInternal; }
 		inline Operator getOperator() const { return _data.oper; }
 
+		inline Token& injectPosition(const SourcePosition& position)
+		{
+			start_position = position;
+			end_position = { position.row, position.column + 1 };
+			return *this;
+		}
+		inline Token& injectPosition(const SourcePosition& begin, const SourcePosition& end)
+		{
+			start_position = utils::min(begin, end);
+			end_position = utils::max(end, begin);
+			return *this;
+		}
+
 	public:
-		static inline Token identifier(const std::string& identifier)
+		static inline Token identifier(const std::string& identifier, const SourcePosition& pbegin = {}, const SourcePosition& pend = {})
 		{
-			return { TokenType::Identifier, { .identifier = new std::string(identifier) } };
+			return { TokenType::Identifier, { .identifier = new std::string(identifier) }, pbegin, pend };
 		}
 
-		static inline Token type(const DataType& type)
+		static inline Token type(const DataType& type, const SourcePosition& pbegin = {}, const SourcePosition& pend = {})
 		{
-			return { TokenType::DataType, { .type = new DataType(type) } };
+			return { TokenType::DataType, { .type = new DataType(type) }, pbegin, pend };
 		}
 
-		static inline Token command(Command cmd)
+		static inline Token command(Command cmd, const SourcePosition& pbegin = {}, const SourcePosition& pend = {})
 		{
-			return { TokenType::Command, { .command = cmd } };
+			return { TokenType::Command, { .command = cmd }, pbegin, pend };
 		}
 
-		static inline Token literalString(const std::string& identifier)
+		static inline Token literalString(const std::string& identifier, const SourcePosition& pbegin = {}, const SourcePosition& pend = {})
 		{
-			return { TokenType::LiteralString, { .literalString = new std::string(identifier) } };
+			return { TokenType::LiteralString, { .literalString = new std::string(identifier) }, pbegin, pend };
 		}
 
-		static inline Token literalInteger(Int32 value)
+		static inline Token literalInteger(Int32 value, const SourcePosition& pbegin = {}, const SourcePosition& pend = {})
 		{
-			return { TokenType::LiteralInteger, { .literalInteger = value } };
+			return { TokenType::LiteralInteger, { .literalInteger = value }, pbegin, pend };
 		}
 
-		static inline Token literalData(ScriptToken value)
+		static inline Token literalData(ScriptToken value, const SourcePosition& pbegin = {}, const SourcePosition& pend = {})
 		{
 			if (!codes::is_valid(value) || codes::is_command(value))
 				return {};
-			return { TokenType::LiteralData, { .literalData = value } };
+			return { TokenType::LiteralData, { .literalData = value }, pbegin, pend };
 		}
 
-		static inline Token literalInternal(ScriptInternal value)
+		static inline Token literalInternal(ScriptInternal value, const SourcePosition& pbegin = {}, const SourcePosition& pend = {})
 		{
-			return { TokenType::LiteralInternal, { .literalInternal = value } };
+			return { TokenType::LiteralInternal, { .literalInternal = value }, pbegin, pend };
 		}
 
-		static inline Token parenthesisOpen()
+		static inline Token statementEnd(const SourcePosition& position = {})
 		{
-			return { TokenType::ParenthesisOpen, {} };
+			return { TokenType::StatementEnd, {}, position };
 		}
 
-		static inline Token parenthesisClose()
+		static inline Token parenthesisOpen(const SourcePosition& position = {})
 		{
-			return { TokenType::ParenthesisClose, {} };
+			return { TokenType::ParenthesisOpen, {}, position };
 		}
 
-		static inline Token blockOpen()
+		static inline Token parenthesisClose(const SourcePosition& position = {})
 		{
-			return { TokenType::BlockOpen, {} };
+			return { TokenType::ParenthesisClose, {}, position };
 		}
 
-		static inline Token blockClose()
+		static inline Token blockOpen(const SourcePosition& position = {})
 		{
-			return { TokenType::BlockClose, {} };
+			return { TokenType::BlockOpen, {}, position };
 		}
 
-		static inline Token oper(Operator op)
+		static inline Token blockClose(const SourcePosition& position = {})
 		{
-			return { TokenType::Operator, { .oper = op } };
+			return { TokenType::BlockClose, {}, position };
 		}
 
-		static inline Token yield()
+		static inline Token oper(Operator op, const SourcePosition& position = {}, bool is_unary = true)
 		{
-			return { TokenType::Yield, {} };
+			return { TokenType::Operator, { .oper = op }, position, position + utils::column_value(is_unary ? 1 : 2) };
+		}
+
+		static inline Token elvisSeparatorPart(const SourcePosition& position = {})
+		{
+			return { TokenType::ElvisSeparatorPart, {}, position };
+		}
+
+		static inline Token yield(const SourcePosition& pbegin = {}, const SourcePosition& pend = {})
+		{
+			return { TokenType::Yield, {}, pbegin, pend };
+		}
+
+		static inline Token invalid(const SourcePosition& pbegin = {}, const SourcePosition& pend = {})
+		{
+			return { TokenType::Invalid, {}, pbegin, pend };
 		}
 	};
+
+
+	void init_builtin_tokens();
+	Token get_builtin_token(const std::string& identifier);
+
+	bool is_valid_identifier(const std::string& str);
+
+	std::vector<Token> parse(CodeReader& input, ErrorManager& errors);
 }
